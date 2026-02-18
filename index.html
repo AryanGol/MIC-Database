@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>PD Parameter Database</title>
+  <title>MIC Database</title>
 
   <!-- DataTables core + extensions -->
   <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/jquery.dataTables.min.css">
@@ -234,8 +234,8 @@
       <div class="brand">
         <div class="logo"></div>
         <div>
-          <h1>Pharmacodynamic Parameter Database</h1>
-          <div class="sub">PD Dataset</div>
+          <h1>MIC Database</h1>
+          <div class="sub">Merged dataset (XLSX)</div>
         </div>
       </div>
       <div class="badge"><span class="dot"></span><span id="rowCount">0 rows</span></div>
@@ -270,7 +270,7 @@
       <div class="field wide">
         <button id="clearAll">Clear all filters</button>
         <div style="margin-top:10px;font-size:12px;color:rgba(255,255,255,0.75)">
-          PD Dataset.
+          Data source: <code>merged_results (1).xlsx</code>
         </div>
       </div>
     </div>
@@ -291,7 +291,8 @@
 
 <script>
 (function () {
-  const XLSX_FILE = "data-16Feb.xlsx";
+  // ✅ Your repo file name (space + parentheses is OK because we encode it when fetching)
+  const XLSX_FILE = "merged_results (1).xlsx";
 
   // Canonical field labels (what our code uses internally)
   const H = {
@@ -314,22 +315,20 @@
   };
 
   const VISIBLE_HEADERS = [
-  H.pmc,
-  H.species,
-  H.drug,
-  H.parameter,
-  // then the rest (unchanged)
-  H.value, H.unit,
-  H.strain, H.source, H.status, H.mode
-];
-
+    H.pmc,
+    H.species,
+    H.drug,
+    H.parameter,
+    H.value, H.unit,
+    H.strain, H.source, H.status, H.mode
+  ];
 
   const DROPDOWN_COLS = new Set([
     H.parameter, H.unit, H.species, H.strain, H.source, H.status, H.mode, H.drug
   ]);
 
   function cleanVal(x){
-    const v = (x ?? "").toString().replace(/\u00A0/g, " ").trim(); // handle NBSP too
+    const v = (x ?? "").toString().replace(/\u00A0/g, " ").trim();
     if (!v) return "";
     if (/^(nan|null|none)$/i.test(v)) return "";
     return v;
@@ -370,32 +369,31 @@
       .sort((a,b)=>a.localeCompare(b, undefined, {numeric:true, sensitivity:"base"}));
   }
 
-  // Map sheet headers -> canonical keys (supports your "Parameter/Variable name" etc.)
+  // Map sheet headers -> canonical keys
   function canonicalHeader(h){
     const s = cleanVal(h).toLowerCase();
 
     if (/^(pmcid|pmc\s*id)$/i.test(s)) return H.pmc;
-    if (/^parameter\b/.test(s)) return H.parameter; // "Parameter" or "Parameter/Variable name"
+    if (/^parameter\b/.test(s)) return H.parameter;
     if (/reported\s+numerical\s+value/.test(s) || /^reported\s*value$/.test(s) || /^value$/.test(s)) return H.value;
     if (/^unit$/.test(s)) return H.unit;
 
     if (/^evidence$/.test(s)) return H.evidence;
     if (/^tested\s*isolate$/.test(s)) return H.testedIsolate;
 
-    if (/^bacterial\s+species/.test(s)) return H.species;
-    if (/^bacterial\s+strain/.test(s)) return H.strain;
-    if (/^source\s+of\s+biological/.test(s) || /^source\s+of\s+isolates/.test(s)) return H.source;
+    if (/^bacterial\s+species/.test(s) || /^species$/.test(s) || /organism/.test(s)) return H.species;
+    if (/^bacterial\s+strain/.test(s) || /^strain$/.test(s)) return H.strain;
+    if (/^source\s+of\s+biological/.test(s) || /^source\s+of\s+isolates/.test(s) || /^source$/.test(s)) return H.source;
     if (/wild-?type|mutant|genotype/.test(s)) return H.status;
     if (/biofilm|planktonic|mixed/.test(s)) return H.mode;
-    if (/^drug\b|chemical\s+compound/.test(s)) return H.drug;
+    if (/^drug\b|chemical\s+compound|compound|antibiotic/.test(s)) return H.drug;
 
     if (/^title$/.test(s)) return H.title;
     if (/^citation$/.test(s)) return H.citation;
 
-    return cleanVal(h); // fallback (unused)
+    return cleanVal(h);
   }
 
-  // Evidence: if the cell has an Excel hyperlink -> use that; else linkify plain URLs in the text
   function linkifyPlainUrls(raw){
     raw = cleanVal(raw);
     if (!raw) return "—";
@@ -432,7 +430,6 @@
 
     const html = linkifyPlainUrls(t);
 
-    // optional fallback: short label like "Table - PMC" with no URL -> link to PMCID page
     if (pmcUrl && t && t.length <= 80 && /^(table|figure|fig\.?|supp|appendix|dataset|data)\b/i.test(t)) {
       return renderLink(pmcUrl, t);
     }
@@ -462,7 +459,8 @@
   }
 
   async function loadXlsxRows(filename){
-    const res = await fetch(filename);
+    // ✅ IMPORTANT: encode spaces/parentheses for GitHub Pages URLs
+    const res = await fetch(encodeURI(filename));
     if (!res.ok) throw new Error(`Failed to load ${filename}: ${res.status}`);
     const ab = await res.arrayBuffer();
     const wb = XLSX.read(ab, { type: "array" });
@@ -474,7 +472,6 @@
     const range = XLSX.utils.decode_range(ws["!ref"]);
     const headerRow = range.s.r;
 
-    // Read headers from first row, map to canonical keys
     const headers = [];
     for (let c = range.s.c; c <= range.e.c; c++){
       const addr = XLSX.utils.encode_cell({ r: headerRow, c });
@@ -483,7 +480,6 @@
       headers.push(canonicalHeader(raw));
     }
 
-    // Build row objects
     const out = [];
     for (let r = headerRow + 1; r <= range.e.r; r++){
       const rowObj = {};
@@ -497,11 +493,9 @@
         const text = cleanVal(cell ? (cell.w ?? cell.v) : "");
         if (text) any = true;
 
-        // Only store canonical fields we care about
         if (Object.values(H).includes(key)) {
           rowObj[key] = text;
 
-          // capture Evidence hyperlink from Excel metadata
           if (key === H.evidence && cell && cell.l && cell.l.Target) {
             rowObj.__evidence_text = text;
             rowObj.__evidence_href = cell.l.Target;
@@ -516,7 +510,6 @@
   }
 
   function preprocess(rows){
-    // 1) Fill-down PMCID
     let lastPMC = "";
     rows.forEach(r => {
       const v = cleanVal(r[H.pmc]);
@@ -524,7 +517,6 @@
       else r[H.pmc] = lastPMC;
     });
 
-    // Ensure all expected fields exist
     const expected = Object.values(H);
     rows.forEach(r => {
       expected.forEach(h => { if (!(h in r)) r[h] = ""; });
@@ -532,7 +524,6 @@
       if (!("__evidence_href" in r)) r.__evidence_href = "";
     });
 
-    // 2) ✅ Fill-down Title + Citation PER PMCID (fixes your "—" issue)
     const metaByPMC = {};
     rows.forEach(r => {
       const pmc = cleanVal(r[H.pmc]) || "__NO_PMC__";
@@ -570,14 +561,12 @@
           return cleanVal(data);
         }
       })),
-      // Hidden searchable columns
       { title: H.title, data: H.title, visible: false, searchable: true },
       { title: H.citation, data: H.citation, visible: false, searchable: true },
       { title: H.testedIsolate, data: H.testedIsolate, visible: false, searchable: true },
       { title: H.evidence, data: H.evidence, visible: false, searchable: true }
     ];
 
-    // Build THEAD (titles + filters)
     const $titleRow = $("<tr/>");
     const $filterRow = $("<tr class='filters'/>");
 
@@ -619,10 +608,10 @@
       stateSave: true,
 
       buttons: [
-        { extend: "copy",  title: "pd-parameter-database" },
-        { extend: "csv",   title: "pd-parameter-database" },
-        { extend: "excel", title: "pd-parameter-database" },
-        { extend: "print", title: "pd-parameter-database" },
+        { extend: "copy",  title: "mic-database" },
+        { extend: "csv",   title: "mic-database" },
+        { extend: "excel", title: "mic-database" },
+        { extend: "print", title: "mic-database" },
         { extend: "colvis", text: "Columns" },
         { extend: "colvisRestore", text: "Reset columns" }
       ],
@@ -631,7 +620,6 @@
       order: [[ 1, "asc" ]]
     });
 
-    // Row count badge
     const updateCount = () => {
       const n = table.rows({ filter: "applied" }).count();
       document.getElementById("rowCount").textContent = `${n} rows`;
@@ -639,7 +627,6 @@
     updateCount();
     table.on("draw", updateCount);
 
-    // Populate dropdowns
     VISIBLE_HEADERS.forEach((h, idxZeroBased) => {
       const dtIdx = idxZeroBased + 1;
       if (!DROPDOWN_COLS.has(h)) return;
@@ -658,7 +645,6 @@
       });
     });
 
-    // Column filters
     $(document).on("keyup change", 'input[data-col-idx]', function () {
       const idx = Number(this.getAttribute("data-col-idx"));
       const col = table.column(idx);
@@ -680,7 +666,6 @@
       col.search(val ? `^${$.fn.dataTable.util.escapeRegex(val)}$` : "", true, false).draw();
     });
 
-    // Global search helpers
     const idxPMC     = VISIBLE_HEADERS.indexOf(H.pmc) + 1;
     const idxParam   = VISIBLE_HEADERS.indexOf(H.parameter) + 1;
     const idxDrug    = VISIBLE_HEADERS.indexOf(H.drug) + 1;
@@ -698,7 +683,6 @@
     document.getElementById("speciesGlobal").addEventListener("input", (e) => {
       table.column(idxSpecies).search(e.target.value || "", false, true).draw();
     });
-
     document.getElementById("titleGlobal").addEventListener("input", (e) => {
       table.search(e.target.value || "", false, true).draw();
     });
@@ -774,5 +758,3 @@
 
 </body>
 </html>
-
-
